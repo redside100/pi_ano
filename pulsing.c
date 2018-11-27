@@ -1,55 +1,154 @@
 #include <stdio.h>
 #include "wiringPi.h"
+#include "softTone.h"
+#include <stdlib.h>
 #include <math.h>
 
 
 // list of input pins and output pins. 
 // Output pins will be pulsed, and represent the row.
 // Input pins will return data once pulsed, representing the active columns in that row.
+// Buzzers pins are the pins for the buzzers.
+
 const int inputPins[4] = { 11, 13, 19, 26 };
 const int outputPins[4] = { 12, 16, 20, 21 };
+const int buzzerPins[4] = { 2, 3, 4, 17 };
 
 // Key mapping to assigned key number. access like this: keys[row][column]; ex. keys[1][2] returns 6
 const int keys[4][4] = { {0, 1, 2, 3}, {4, 5, 6, 7}, {8, 9, 10, 11}, {12, 13, 14, 15} };
 
-// Arrays to keep track of which keys are active (pressed down)
-int activeKeys[4][4] = { {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0} };
+// Array to keep track of which keys are active (pressed down)
+int activeKeyMatrix[4][4] = { {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0} };
 
-// Returns a current snapshot of the physical key matrix.
-int* getMatrixSnapshot(){
-	int matrix[4][4];
-	// Loop through each row
-	for (int i = 0; i < 4; i++){
+// Array to keep track of which buzzers are playing
+int activeBuzzerMatrix[4][4] = { {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0} };
+int activeBuzzers[4] = {0, 0, 0, 0};
+
+// Buzzer counter (max 4)
+int buzzerCount = 0;
+
+// Define rows and cols
+#define MATRIX_ROWS 4
+#define MATRIX_COLS 4
+#define MAX_BUZZERS 4
+
+
+// Returns the value of a column in a row of the physical key matrix.
+int pulseEntry(int row, int col){
+	// Pulse the row (set to high)
+	digitalWrite(outputPins[row], HIGH);
 		
-		// Pulse the row (set to high)
-		digitalWrite(outputPins[i], HIGH);
 		
-		// Get each input response
-		for (int j = 0; j < 4; j++){
-			// Add to snapshot
-			matrix[i][j] = digitalRead(inputPins[i]);
-		}
-		
-		// "Unpulse" (set to low)
-		digitalWrite(outputPins[i], LOW);
-	}
 	
-	return matrix;
+	int colValue = digitalRead(inputPins[col]);
+		
+	// "Unpulse" (set to low)
+	digitalWrite(outputPins[row], LOW);
+	
+	return colValue;
+	
 }
+
 
 // Initializes GPIO pins for the matrix, buzzers, and octave control buttons.
 void initPins(){
 	// Init the four input pins (matrix)
-	for (int i = 0; i < 4; i++){
+	for (int i = 0; i < MATRIX_ROWS; i++){
 		pinMode(inputPins[i], INPUT);
 		digitalWrite(inputPins[i], PUD_UP);
 	}
 	// Init the four output pins (matrix)
-	for (int i = 0; i < 4; i++){
+	for (int i = 0; i < MATRIX_COLS; i++){
 		pinMode(outputPins[i], OUTPUT);
 		digitalWrite(outputPins[i], LOW);
 	}
+	// Init buzzer pins as output pins
+	for (int i = 0; i < MAX_BUZZERS; i++){
+		softToneCreate(buzzerPins[i]);
+	}
 }
+
+// Stops a buzzer from playing sound
+void clearFrequency(int buzzerPin){
+	printf("Stopped buzzer %d\n", buzzerPin); 
+	// softToneStop(buzzerPin);
+}
+
+// Plays a frequency to a buzzer, based on what key was pressed, and what octave
+void playFrequency(int key, int octave, int buzzerPin){
+	// Octave must be between 1 and 7 (max 5000hz)
+	if (octave > 0 && octave < 8){
+		
+		// Since we're calculating with A4 = 440, 
+		// this gives the factor of what we should multiply the frequency by
+		int trueOctave = octave - 4;
+		
+		// The formula with A4 = 440hz. This assumes that when key = 2, it is C4, and key = 14 is C5
+		double basis = pow(2, (double) (1.0 / 12.0));
+		int frequency = (int) ((440 * pow(basis, key - 11)) * pow(2, trueOctave));
+		
+		// Quick check
+		if (buzzerCount < 4){
+			printf("Playing frequency %d with buzzer %d\n", frequency, buzzerPin); 
+			// softToneWrite(buzzerPin, frequency);	
+		}
+
+	}
+}
+
+void disableBuzzer(int pin){
+	clearFrequency(pin);
+	for (int i = 0; i < MAX_BUZZERS; i++){
+	    if (activeBuzzers[i] == pin){
+			activeBuzzers[i] = 0;
+		}
+	}
+	buzzerCount--;
+}
+
+void updateKeys(int currentOctave, int updatedMatrix[MATRIX_ROWS][MATRIX_COLS]){
+	for (int i = 0; i < MATRIX_ROWS; i++){
+		for (int j = 0; j < MATRIX_COLS; j++){
+			// New key is being played, play the note
+			if (updatedMatrix[i][j] == 1 && activeKeyMatrix[i][j] == 0){
+				
+				// printf("Old: %d\nNew: %d\n", activeKeyMatrix[i][j], updatedMatrix[i][j]);
+
+				// Check if there are available buzzers
+				if (buzzerCount < MAX_BUZZERS){
+					// We only care about keys here, not the octave buttons. Check the entry (2-14)
+					if (keys[i][j] >= 2 && keys[i][j] <= 14){
+						
+						activeKeyMatrix[i][j] = 1;
+						
+						// Check for an available spot
+						int buzzerPin = 0;
+						for (int i = 0; i < MAX_BUZZERS; i++){
+							if (!activeBuzzers[i]){
+								buzzerPin = buzzerPins[i];
+								activeBuzzers[i] = buzzerPin;
+								break;
+							}
+						}
+						
+						// Play the freq 
+						playFrequency(keys[i][j], currentOctave, buzzerPin);
+						activeBuzzerMatrix[i][j] = buzzerPin;
+						buzzerCount++;
+					}
+				}
+				
+			}else if (updatedMatrix[i][j] == 0 && activeKeyMatrix[i][j] == 1){ // Key is being released, clear the note`
+				if (keys[i][j] >= 2 && keys[i][j] <= 14){
+					disableBuzzer(activeBuzzerMatrix[i][j]);
+					activeBuzzerMatrix[i][j] = 0;
+					activeKeyMatrix[i][j] = 0;
+				}
+			}
+		}
+	}
+}
+
 
 int main(void){
 	
@@ -57,19 +156,31 @@ int main(void){
 	
 	initPins();
 	
-	
+	int octave = 4;
 	while(1){
 		
-		int* snapshot = getMatrixSnapshot();
-		
-		for (int i = 0; i < 4; i++){
-			for (int j = 0; j < 4; j++){
-				printf("%d ", snapshot[i][j]);
+		// Construct a snapshot of the current physical key matrix.
+		int snapshot[MATRIX_ROWS][MATRIX_COLS];
+		for (int i = 0; i < MATRIX_ROWS; i++){
+			for (int j = 0; j < MATRIX_COLS; j++){
+				snapshot[i][j] = pulseEntry(i, j);
 			}
-			printf("\n");
 		}
-		printf("=======\n");
+		
+		// Print out matrix
+		// for (int i = 0; i < MATRIX_ROWS; i++){
+			// for (int j = 0; j < MATRIX_COLS; j++){
+				// printf("%d ", snapshot[i][j]);
+			// }
+			// printf("\n");
+		// }
+		// printf("=======\n");
+		
+		updateKeys(octave, snapshot);
+		
+
 		delay(10);
+		
 	}
 	
 	
