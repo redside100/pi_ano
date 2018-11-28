@@ -71,7 +71,7 @@ void initPins(){
 // Stops a buzzer from playing sound
 void clearFrequency(int buzzerPin){
 	printf("Stopped buzzer %d\n", buzzerPin); 
-	// softToneStop(buzzerPin);
+	softToneWrite(buzzerPin, 0);
 }
 
 // Plays a frequency to a buzzer, based on what key was pressed, and what octave
@@ -90,7 +90,7 @@ void playFrequency(int key, int octave, int buzzerPin){
 		// Quick check
 		if (buzzerCount < 4){
 			printf("Playing frequency %d with buzzer %d\n", frequency, buzzerPin); 
-			// softToneWrite(buzzerPin, frequency);	
+			softToneWrite(buzzerPin, frequency);	
 		}
 
 	}
