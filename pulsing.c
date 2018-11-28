@@ -106,6 +106,8 @@ void playFrequency(int key, int octave, int buzzerPin){
 }
 
 void disableBuzzer(int pin){
+	
+	// Set frequency of buzzer to 0
 	clearFrequency(pin);
 	for (int i = 0; i < MAX_BUZZERS; i++){
 	    if (activeBuzzers[i] == pin){
