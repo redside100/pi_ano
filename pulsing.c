@@ -6,13 +6,13 @@
 
 
 // list of input pins and output pins. 
-// Output pins will be pulsed, and represent the row.
-// Input pins will return data once pulsed, representing the active columns in that row.
+// Output pins will be pulsed, and represent the column.
+// Input pins will return data once pulsed, representing the active rows in that column.
 // Buzzers pins are the pins for the buzzers.
 
 const int inputPins[4] = { 11, 13, 19, 26 };
 const int outputPins[4] = { 12, 16, 20, 21 };
-const int buzzerPins[4] = { 2, 3, 4, 17 };
+const int buzzerPins[4] = { 14, 15, 18, 23 };
 
 // Key mapping to assigned key number. access like this: keys[row][column]; ex. keys[1][2] returns 6
 // 0 and 1 are octave up and down keys respectively, while 2-14 are the piano keys. 15 is unused.
@@ -38,18 +38,18 @@ int currentOctave = 4;
 
 
 // Returns the value of a column in a row of the physical key matrix.
-int pulseEntry(int row, int col){
-	// Pulse the row (set to high)
-	digitalWrite(outputPins[row], HIGH);
-		
-		
+int pulseEntry(int col, int row){
+	// Pulse the column (set to high)
+	digitalWrite(outputPins[col], HIGH);
 	
-	int colValue = digitalRead(inputPins[col]);
+	delay(3);
+	
+	int rowValue = digitalRead(inputPins[row]);
 		
 	// "Unpulse" (set to low)
-	digitalWrite(outputPins[row], LOW);
+	digitalWrite(outputPins[col], LOW);
 	
-	return colValue;
+	return rowValue;
 	
 }
 
@@ -94,7 +94,8 @@ void playFrequency(int key, int octave, int buzzerPin){
 		
 		// The formula with A4 = 440hz. This assumes that when key = 2, it is C4, and key = 14 is C5
 		double basis = pow(2, (double) (1.0 / 12.0));
-		int frequency = (int) ((440 * pow(basis, key - 11)) * pow(2, trueOctave));
+		// Add 0.5 to round (casting to int truncates, so adding 0.5 would make it round)
+		int frequency = (int) (((440 * pow(basis, key - 11)) * pow(2, trueOctave)) + 0.5);
 		
 		// Quick check
 		if (buzzerCount < 4){
@@ -194,9 +195,12 @@ int main(void){
 		
 		// Construct a snapshot of the current physical key matrix.
 		int snapshot[MATRIX_ROWS][MATRIX_COLS];
+
+		
 		for (int i = 0; i < MATRIX_ROWS; i++){
 			for (int j = 0; j < MATRIX_COLS; j++){
-				snapshot[i][j] = pulseEntry(i, j);
+				// Tuilding it by columns "vectors"
+				snapshot[j][i] = pulseEntry(i, j);
 			}
 		}
 		
@@ -210,9 +214,6 @@ int main(void){
 		// printf("=======\n");
 		
 		updateKeys(snapshot);
-		
-
-		delay(10);
 		
 	}
 	
