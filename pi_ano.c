@@ -1,17 +1,19 @@
-#include <stdio.h>
-#include "wiringPi.h"
-#include "softTone.h"
-#include <stdlib.h>
-#include <math.h>
+#include "wiringPi.h" // GPIO library
+#include "softTone.h" // For playing tones on buzzers
+
+#include <stdio.h> // For printf, fprintf, etc.
+#include <stdlib.h> // Standard library
+#include <math.h> // For frequency analysis
 #include <stdint.h>
+
 #include <fcntl.h>
-#include <linux/watchdog.h>
-#include <sys/ioctl.h>
-#include <time.h>
-#include <sys/time.h>
-#include <signal.h>
-
-
+#include <unistd.h> 
+#include <linux/watchdog.h> // For watchdog
+#include <sys/ioctl.h> // For watchdog
+#include <time.h> // To get system time
+#include <sys/time.h> // To get system time
+#include <signal.h> // To catch Ctrl+C interruptions
+#include <string.h> // To process log file location in config
 
 // Name of the program
 #define PROGRAM_NAME "pi_ano"
@@ -45,6 +47,7 @@ int currentOctave = 4;
 // Global watchdog timer (default)
 int watchDogTimer = 10;
 
+
 // Global variable to catch keyboard interrupts
 static volatile int keepRunning = 1;
 
@@ -70,7 +73,7 @@ void playFrequency(int key, int octave, int buzzerPin, FILE* logFile, char time[
 void disableBuzzer(int pin, FILE* logFile, char time[TIME_SIZE]);
 void getTime(char* buffer);
 void generateNewConfig();
-void setValuesFromConfig(FILE* configFile, int* octave, int* wdTimer);
+void setValuesFromConfig(FILE* configFile, int* octave, int* wdTimer, char* logFileName);
 int keyToFreq(int key, int octave);
 void updateKeys(int updatedMatrix[MATRIX_ROWS][MATRIX_COLS], FILE* logFile, char time[TIME_SIZE]);
 void interruptHandler(int sig);
@@ -84,12 +87,16 @@ void interruptHandler(int sig);
 
 
 // Returns the value of a column in a row of the physical key matrix.
+// Takes ~3 ms to process.
 int pulseEntry(int col, int row){
 	// Pulse the column (set to high)
 	digitalWrite(outputPins[col], HIGH);
 	
+	// Wait 3 ms to make sure the results are accurate.
+	// If we read the values too fast the pins won't have time to react to the pulse.
 	delay(3);
 	
+	// Read the row value at that point
 	int rowValue = digitalRead(inputPins[row]);
 		
 	// "Unpulse" (set to low)
@@ -117,8 +124,6 @@ void initPins(){
 	for (int i = 0; i < MAX_BUZZERS; i++){
 		softToneCreate(buzzerPins[i]);
 	}
-	
-	printf("[INFO] All GPIO pins initialized\n");
 	
 	
 }
@@ -204,14 +209,16 @@ void getTime(char* buffer) {
 // Generates a default configuration file
 void generateNewConfig(){
 	FILE* newConfigFile = fopen("/home/pi/pi_ano.cfg", "a");
-	fprintf(newConfigFile, "#This configuration file is to store the program's octave (1-4), as well as the timeout of the watchdog timer (1-15 seconds).\n");
+	fprintf(newConfigFile, "#This configuration file is to store the program's octave (1-4), the timeout of the watchdog timer (1-15 seconds), and the log file location.\n");
+	fprintf(newConfigFile, "#Note: The log file's location will ignore colons and spaces.\n");
 	fprintf(newConfigFile, "initialOctave: 4\n");
 	fprintf(newConfigFile, "watchDogTimer: 10\n");
+	fprintf(newConfigFile, "logFileLocation: /home/pi/pi_ano.log\n");
 	fclose(newConfigFile);
 }
 
 // Sets octave and watchdog timer values from a configuration file.
-void setValuesFromConfig(FILE* configFile, int* octave, int* wdTimer){
+void setValuesFromConfig(FILE* configFile, int* octave, int* wdTimer, char* logFileName){
 	// Buffer for the file
 	char buffer[255];
 	
@@ -249,7 +256,7 @@ void setValuesFromConfig(FILE* configFile, int* octave, int* wdTimer){
 					}
 					value++;
 				
-				}else if (buffer[i] == ' ' && lastChar == ':' && value == 1){
+				}else if (buffer[i] == ' ' && lastChar == ':' && value == 1){ // We're at the watchdog timer value
 				
 					// Keep looping until null terminator (end of line)
 					while(buffer[i] != 0) {
@@ -265,6 +272,23 @@ void setValuesFromConfig(FILE* configFile, int* octave, int* wdTimer){
 					}
 					value++;
 				
+				}else if (buffer[i] == ' ' && lastChar == ':' && value == 2){
+					
+					int j = 0;
+					// Keep looping until null terminator or new line (end of line)
+					while(buffer[i] != 0 && buffer[i] != '\n') {
+					
+						// If the character is not a colon, or a space, then add it
+						if(buffer[i] != ':' && buffer[i] != ' ') {
+							logFileName[j] = buffer[i];
+							j++;
+						}
+						lastChar = buffer[i];
+						i++;
+					}
+					value++;
+					logFileName[j] = 0;
+					
 				}else{
 					lastChar = buffer[i];
 					i++;
@@ -304,6 +328,7 @@ int keyToFreq(int key, int octave){
 // Updates the current active key matrix with another one (most likely the physical one).
 // If a change is detected, it represents a key was pressed/released
 // Requires a pointer to a logFile and a time char array to log down octave changes and key presses.
+
 void updateKeys(int updatedMatrix[MATRIX_ROWS][MATRIX_COLS], FILE* logFile, char time[TIME_SIZE]){
 	
 	// Compare each individual entry in the matrices
@@ -320,7 +345,7 @@ void updateKeys(int updatedMatrix[MATRIX_ROWS][MATRIX_COLS], FILE* logFile, char
 						
 						activeKeyMatrix[i][j] = 1;
 						
-						// Check for an available spot
+						// Check for an available spot, and mark as active buzzer
 						int buzzerPin = 0;
 						for (int i = 0; i < MAX_BUZZERS; i++){
 							if (!activeBuzzers[i]){
@@ -330,7 +355,7 @@ void updateKeys(int updatedMatrix[MATRIX_ROWS][MATRIX_COLS], FILE* logFile, char
 							}
 						}
 						
-						// Play the freq 
+						// Play the frequency, and update the buzzer matrix (keep track of which buzzers are playing)
 						playFrequency(keys[i][j], currentOctave, buzzerPin, logFile, time);
 						activeBuzzerMatrix[i][j] = buzzerPin;
 						buzzerCount++;
@@ -371,10 +396,13 @@ void updateKeys(int updatedMatrix[MATRIX_ROWS][MATRIX_COLS], FILE* logFile, char
 				
 			}else if (updatedMatrix[i][j] == 0 && activeKeyMatrix[i][j] == 1){ // Key is being released, clear the note`
 				if (keys[i][j] >= 2 && keys[i][j] <= 14){
+					// Disable the buzzer, and update the respective matrices
 					disableBuzzer(activeBuzzerMatrix[i][j], logFile, time);
 					activeBuzzerMatrix[i][j] = 0;
 					activeKeyMatrix[i][j] = 0;
 				}else if (keys[i][j] >= 0 && keys[i][j] <= 2){ // Octave up/down
+				
+					// Get rid of that entry in the active key matrix
 					activeKeyMatrix[i][j] = 0;
 				}
 			}
@@ -392,10 +420,7 @@ int main(void){
 	
 	// Setup interrupt handler
 	signal(SIGINT, interruptHandler);
-	
-	// Open up a log file.
-	FILE* logFile;
-	logFile = fopen("/home/pi/pi_ano.log", "a");
+
 	
 	// Set up a config file.
 	FILE* configFile;
@@ -405,18 +430,32 @@ int main(void){
 	char time[30];
 	getTime(time);
 	
+	char logFileLocation[100];
+	
 	// Init values from config
 	if (configFile){
-		setValuesFromConfig(configFile, &currentOctave, &watchDogTimer);
+		setValuesFromConfig(configFile, &currentOctave, &watchDogTimer, logFileLocation);
 	}else{
 		generateNewConfig(); // If config doesn't exist, just make a new one, and keep default values
-		getTime(time);
-		LOG_MSG(logFile, PROGRAM_NAME, time, "No configuration file detected, generating new one");
+		
+		// Set default log file loc
+		strncpy(logFileLocation, "/home/pi/pi_ano.log", 100);
+		
 	}
 	
 	// Done with configFile, so close it (if it existed before)
 	if (configFile){
 		fclose(configFile);
+	}
+	
+	// Open up a log file (from config, or default)
+	FILE* logFile;
+	logFile = fopen(logFileLocation, "a");
+	
+	// If for any reason the log file doesn't open, throw an error
+	if (!logFile){
+		printf("[ERROR] Log file was not loaded properly. Exiting! (are you running the program with sudo?) \n");
+		return -1;
 	}
 	
 	wiringPiSetupGpio();
@@ -428,12 +467,42 @@ int main(void){
 	LOG_MSG(logFile, PROGRAM_NAME, time, "GPIO successfully initialized");
 	
 	initPins();
+	printf("[INFO] All GPIO pins initialized\n");
 	
 	// Log pins initialized
 	getTime(time);
 	LOG_MSG(logFile, PROGRAM_NAME, time, "All GPIO pins successfully initialized");
 	
 	printf("[INFO] Pi_ano is running... Press Ctrl + C to exit.\n");
+	
+	
+	// Set up the watch dog
+	int watchdog;
+
+
+	if ((watchdog = open("/dev/watchdog", O_RDWR | O_NOCTTY)) < 0) {
+		printf("[ERROR] Couldn't open watchdog device! (%d)\n", watchdog);
+		return -1;
+	}
+	
+	//Get the current time
+	getTime(time);
+	
+	//Log that the watchdog file has been opened
+	LOG_MSG(logFile, PROGRAM_NAME, time, "Watchdog file was successfully opened");
+
+
+	// Set watchdog limit to timer
+	ioctl(watchdog, WDIOC_SETTIMEOUT, &watchDogTimer);
+	
+	//Get the current time
+	getTime(time);
+	
+	//Log that the Watchdog time limit has been set
+	LOG_MSG(logFile, PROGRAM_NAME, time, "Watchdog time limit successfully set");
+
+	// Set the current timeout to whatever the watchdog set it to (in case it's over 15 sec somehow)
+	ioctl(watchdog, WDIOC_GETTIMEOUT, &watchDogTimer);
 	
 	// Log that the program was launched
 	getTime(time);
@@ -442,12 +511,15 @@ int main(void){
 	// Attempt to run program at a higher priority
 	piHiPri(1);
 	
+	// Timer to tell when we should update the watchdog
+	int timer = 0;
+	
 	while(keepRunning){
 		
 		// Construct a snapshot of the current physical key matrix.
+		// Since we're pulsing 16 different times, it would take 16 * 3 ms = 48 ms.
 		int snapshot[MATRIX_ROWS][MATRIX_COLS];
 
-		
 		for (int i = 0; i < MATRIX_ROWS; i++){
 			for (int j = 0; j < MATRIX_COLS; j++){
 				// Building it by column "vectors"
@@ -455,25 +527,43 @@ int main(void){
 			}
 		}
 		
+		// Add 48 ms to the timer
+		timer += 48;
 		
-		
-		// Print out matrix
-		// for (int i = 0; i < MATRIX_ROWS; i++){
-			// for (int j = 0; j < MATRIX_COLS; j++){
-				// printf("%d ", snapshot[i][j]);
-			// }
-			// printf("\n");
-		// }
-		// printf("=======\n");
-		
+		// Update the snapshot of the physical matrix to the one stored in the program
+		// Handle buzzer playing, buzzer stopping, octave shifts, etc.
 		getTime(time);
 		updateKeys(snapshot, logFile, time);
+		
+		
+		// Watchdog timeout in ms
+		int wdTimeMs = watchDogTimer * 1000;
+		
+
+		// If the timer hits the halfway point for the watchdog, update it
+		if (timer >= wdTimeMs / 2){
+			
+			// Update the watchdog to keep the system alive
+			ioctl(watchdog, WDIOC_KEEPALIVE, 0);
+			
+			// Log that the Watchdog was updated
+			getTime(time);
+			LOG_MSG(logFile, PROGRAM_NAME, time, "Watchdog updated");
+			
+			// Reset timer
+			timer = 0;
+		}
 		
 	}
 	
 	// Keyboard interrupt, loop is exited (since keepRunning = 0)
 	
+	// Kill the watchdog, and log it
+	write(watchdog, "V", 1);
+	close(watchdog);
+	
 	getTime(time);
+	LOG_MSG(logFile, PROGRAM_NAME, time, "Watchdog device successfully shut down");
 	LOG_MSG(logFile, PROGRAM_NAME, time, "Pi_ano successfully shutdown");
 	
 	printf("\n[INFO] Pi_ano shutting down!\n");
