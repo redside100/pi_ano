@@ -18,6 +18,15 @@
 // Name of the program
 #define PROGRAM_NAME "pi_ano"
 
+
+/* Name: pi_ano
+ * Description: A program that uses a raspberry pi's GPIO pins, some piezo buzzers, and a key matrix to simulate a piano.
+ * Although features are limited (can only support up to 4 notes at the same time, can't adjust volume), it is still functional.
+ * Authors: Andrew Peng, Braden Baaker, Michael Zhu
+ * Date: Dec. 1, 2018
+ */
+
+ 
 // List of input pins and output pins. 
 // Output pins will be pulsed, and represent the column.
 // Input pins will return data once pulsed, representing the active rows in that column.
