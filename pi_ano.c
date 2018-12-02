@@ -68,7 +68,7 @@ static volatile int keepRunning = 1;
 #define MATRIX_COLS 4
 #define MAX_BUZZERS 4
 
-// Macro to both print a message to a file.
+// Macro to print a message to a file.
 #define LOG_MSG(file, programName, time, str) \
 	do{ \
 			fprintf(file, "[%s][%s]: %s\n", programName, time, str); \
